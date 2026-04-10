@@ -1,0 +1,13 @@
+{
+    "name": "Fillet Weld",
+    "category": "welding",
+    "description": "AWS A2.4 fillet weld symbol",
+    "parameters": [
+        {"id": "size", "label": "Weld Size", "type": "text", "default": "6"},
+        {"id": "process", "label": "Process", "type": "text", "default": "GMAW"}
+    ],
+    "snap_points": [
+        {"id": "arrow_tip", "x": 0, "y": 30},
+        {"id": "tail", "x": 120, "y": 30}
+    ]
+}

@@ -1,0 +1,11 @@
+{
+    "name": "Surface Finish",
+    "category": "surface",
+    "description": "ISO 1302 surface finish symbol",
+    "parameters": [
+        {"id": "roughness", "label": "Ra Value", "type": "text", "default": "1.6"}
+    ],
+    "snap_points": [
+        {"id": "base", "x": 0, "y": 50}
+    ]
+}

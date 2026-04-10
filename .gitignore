@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+
+# Project-specific
+tests/fixtures/*.pdf
+!tests/fixtures/sample.pdf

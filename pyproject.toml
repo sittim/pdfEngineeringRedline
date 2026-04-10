@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdfredline"
+version = "0.1.0"
+description = "Cross-platform PDF redlining and annotation tool"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7.0",
+    "qtpy>=2.4.0",
+    "pypdfium2>=4.0.0",
+    "pikepdf>=8.0.0",
+    "pyqtribbon>=0.7.0",
+    "qtawesome>=1.3.0",
+    "svgwrite>=1.4.0",
+]
+
+[project.scripts]
+pdfredline = "pdfredline.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pdfredline"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
+ignore = ["N802", "N803"]  # Qt uses camelCase for method overrides and parameters
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+qt_api = "pyside6"

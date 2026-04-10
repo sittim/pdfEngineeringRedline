@@ -1,0 +1,14 @@
+{
+    "name": "Position",
+    "category": "gdt",
+    "description": "ASME Y14.5 position feature control frame",
+    "parameters": [
+        {"id": "tolerance", "label": "Tolerance", "type": "text", "default": "0.05"},
+        {"id": "datum_a", "label": "Datum A", "type": "text", "default": "A"},
+        {"id": "datum_b", "label": "Datum B", "type": "text", "default": "B"}
+    ],
+    "snap_points": [
+        {"id": "left", "x": 0, "y": 15},
+        {"id": "right", "x": 120, "y": 15}
+    ]
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60" viewBox="0 0 120 60">
+  <line x1="0" y1="30" x2="60" y2="30" stroke="black" stroke-width="1.5"/>
+  <line x1="60" y1="30" x2="120" y2="30" stroke="black" stroke-width="1.5"/>
+  <polygon points="60,30 45,15 45,30" fill="none" stroke="black" stroke-width="1.5"/>
+  <line x1="60" y1="10" x2="60" y2="50" stroke="black" stroke-width="1.5"/>
+  <text id="size" x="35" y="12" font-size="10" font-family="Arial">6</text>
+  <text id="process" x="65" y="55" font-size="8" font-family="Arial">GMAW</text>
+</svg>
