@@ -96,22 +96,34 @@ class _RenderWorker(QRunnable):
                 optimize_mode="lcd",
                 extra_flags=FPDF_PRINTING,
             )
-            arr = bitmap.to_numpy()
+
+            # CRITICAL: pypdfium2's bitmap.to_numpy() returns a *view* that
+            # shares memory with PDFium's bitmap buffer. We must copy out of
+            # that buffer (either explicitly or via min-pool, which produces
+            # a fresh array) BEFORE calling bitmap.close(), otherwise we
+            # have a use-after-free that segfaults the moment the allocator
+            # recycles the freed buffer.
+            arr_view = bitmap.to_numpy()
+            # _min_pool's reshape().min() materialises a brand-new array that
+            # owns its memory; .copy() does the same for the no-pool path.
+            # Either way, after this line `arr` no longer aliases PDFium.
+            arr = (
+                _min_pool(arr_view, self.block_size)
+                if self.block_size > 1
+                else arr_view.copy()
+            )
+            arr = np.ascontiguousarray(arr)
+
             bitmap.close()
             page.close()
             doc.close()
-
-            # Min-pool down to the output resolution. Block size of 1 means
-            # no downsampling — used at high zoom levels where the rendered
-            # bitmap already matches the screen.
-            if self.block_size > 1:
-                arr = np.ascontiguousarray(_min_pool(arr, self.block_size))
 
             h, w = arr.shape[:2]
             channels = arr.shape[2] if arr.ndim == 3 else 1
             fmt = QImage.Format.Format_RGBA8888 if channels == 4 else QImage.Format.Format_RGB888
 
-            # QImage needs the data to stay alive, so we keep a reference via .copy()
+            # arr now owns its memory, so QImage can safely view it; .copy()
+            # then gives the pixmap its own buffer.
             qimage = QImage(arr.data, w, h, arr.strides[0], fmt).copy()
             pixmap = QPixmap.fromImage(qimage)
 
