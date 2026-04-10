@@ -90,8 +90,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.pdfredline.app",
         info_plist={
             "NSHighResolutionCapable": "True",
-            "CFBundleShortVersionString": "0.3.1",
-            "CFBundleVersion": "0.3.1",
+            "CFBundleShortVersionString": "0.3.2",
+            "CFBundleVersion": "0.3.2",
             "NSPrincipalClass": "NSApplication",
         },
     )

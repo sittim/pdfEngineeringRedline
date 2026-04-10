@@ -5,11 +5,6 @@ import pypdfium2 as pdfium
 from qtpy.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 from qtpy.QtGui import QImage, QPixmap
 
-# PDFium render flag — sets the print-mode rendering path which uses different
-# stroke handling than the default screen path. Combined with optimize_mode="lcd"
-# (FPDF_LCD_TEXT) via bitwise OR inside pypdfium2.
-FPDF_PRINTING = 0x800
-
 
 def _min_pool(arr: np.ndarray, block: int) -> np.ndarray:
     """Min-pool ("darkest of block") downsample an RGB(A) bitmap by an integer
@@ -87,43 +82,51 @@ class _RenderWorker(QRunnable):
             height_pts = page.get_height()
 
             scale = self.render_dpi / 72.0
-            # optimize_mode="lcd" sets FPDF_LCD_TEXT for sharper text;
-            # extra_flags=FPDF_PRINTING selects PDFium's print rendering path,
-            # which uses less aggressive thin-feature anti-aliasing than the
-            # default screen path.
-            bitmap = page.render(
-                scale=scale,
-                optimize_mode="lcd",
-                extra_flags=FPDF_PRINTING,
-            )
+            bitmap = page.render(scale=scale, optimize_mode="lcd")
 
-            # CRITICAL: pypdfium2's bitmap.to_numpy() returns a *view* that
-            # shares memory with PDFium's bitmap buffer. We must copy out of
-            # that buffer (either explicitly or via min-pool, which produces
-            # a fresh array) BEFORE calling bitmap.close(), otherwise we
-            # have a use-after-free that segfaults the moment the allocator
-            # recycles the freed buffer.
-            arr_view = bitmap.to_numpy()
-            # _min_pool's reshape().min() materialises a brand-new array that
-            # owns its memory; .copy() does the same for the no-pool path.
-            # Either way, after this line `arr` no longer aliases PDFium.
-            arr = (
-                _min_pool(arr_view, self.block_size)
-                if self.block_size > 1
-                else arr_view.copy()
-            )
-            arr = np.ascontiguousarray(arr)
+            # Copy out of PDFium's bitmap buffer the safest way possible:
+            # bitmap.buffer is a `(c_ubyte * N)` ctypes array; bytes() invokes
+            # the Python buffer protocol and produces a fresh, fully Python-
+            # owned bytes object via a single memcpy. No numpy strided iter,
+            # no aliasing, no platform-specific allocator quirks. This avoids
+            # both the macOS heisensegfault (v0.3.0) and the Windows heap
+            # corruption (v0.3.1) that surfaced when the previous code copied
+            # via numpy's .copy() / reshape().
+            h_px = bitmap.height
+            w_px = bitmap.width
+            n_ch = bitmap.n_channels
+            stride = bitmap.stride
+            raw = bytes(bitmap.buffer)
 
             bitmap.close()
             page.close()
             doc.close()
 
+            # Reconstruct a numpy array on top of the Python-owned bytes.
+            # frombuffer is a zero-copy view into the bytes object, kept alive
+            # via arr.base. Handle stride padding (pdfium aligns rows to 4
+            # bytes; for some widths this leaves trailing padding per row).
+            if stride == w_px * n_ch:
+                arr = np.frombuffer(raw, dtype=np.uint8).reshape(h_px, w_px, n_ch)
+            else:
+                # Strip per-row padding by viewing as (H, stride) then slicing.
+                arr = (
+                    np.frombuffer(raw, dtype=np.uint8)
+                    .reshape(h_px, stride)[:, : w_px * n_ch]
+                    .reshape(h_px, w_px, n_ch)
+                )
+            # frombuffer returns a read-only array; promote to writable so the
+            # min-pool path (or QImage construction) can operate on it freely.
+            arr = arr.copy()
+
+            if self.block_size > 1:
+                arr = _min_pool(arr, self.block_size)
+            arr = np.ascontiguousarray(arr)
+
             h, w = arr.shape[:2]
             channels = arr.shape[2] if arr.ndim == 3 else 1
             fmt = QImage.Format.Format_RGBA8888 if channels == 4 else QImage.Format.Format_RGB888
 
-            # arr now owns its memory, so QImage can safely view it; .copy()
-            # then gives the pixmap its own buffer.
             qimage = QImage(arr.data, w, h, arr.strides[0], fmt).copy()
             pixmap = QPixmap.fromImage(qimage)
 
