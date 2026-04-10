@@ -2,7 +2,12 @@ import os
 
 import numpy as np
 
-from pdfredline.canvas.pdf_renderer import PdfRenderer, _min_pool
+from pdfredline.canvas.pdf_renderer import (
+    PdfRenderer,
+    _adaptive_pool,
+    _mean_pool,
+    _min_pool,
+)
 
 SAMPLE_PDF = os.path.join(os.path.dirname(__file__), "fixtures", "sample.pdf")
 
@@ -47,17 +52,106 @@ def test_min_pool_handles_rgba():
     assert out[0, 0].tolist() == [10, 20, 30, 40]
 
 
+# -- _mean_pool unit tests --
+
+
+def test_mean_pool_averages_block():
+    """Mean-pool produces the per-channel average of each block. This is the
+    standard antialiased downsample — preserves text edges as midtones."""
+    arr = np.array(
+        [[[100, 100, 100], [200, 200, 200]],
+         [[100, 100, 100], [200, 200, 200]]],
+        dtype=np.uint8,
+    )
+    out = _mean_pool(arr, 2)
+    assert out.shape == (1, 1, 3)
+    assert out[0, 0].tolist() == [150, 150, 150]
+
+
+def test_mean_pool_block_one_is_identity():
+    arr = np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8)
+    out = _mean_pool(arr, 1)
+    assert np.array_equal(out, arr)
+
+
+# -- _adaptive_pool unit tests --
+
+
+def test_adaptive_pool_preserves_text_edges():
+    """At a block where the mean-pooled pixel is a midtone (not near-white),
+    no rescue is needed: the output matches mean-pool exactly. This is what
+    keeps text strokes smooth — they appear as midtones, not as sub-pixel
+    thin features that need rescuing."""
+    # 2x2 block representing an antialiased text edge: half white, half dark.
+    arr = np.array(
+        [[[255, 255, 255], [255, 255, 255]],
+         [[ 50,  50,  50], [ 50,  50,  50]]],
+        dtype=np.uint8,
+    )
+    out = _adaptive_pool(arr, 2)
+    # Mean = (255+255+50+50)/4 = 152.5 — midtone, NOT near-white
+    # No rescue → output is the mean
+    assert out.shape == (1, 1, 3)
+    assert 150 <= out[0, 0, 0] <= 153
+
+
+def test_adaptive_pool_rescues_thin_dark_feature():
+    """A 4x4 block that is mostly white with one dark pixel: mean-pool would
+    average to ~239 (near-white) and erase the feature. Adaptive should
+    detect this and substitute the min-pool value (the dark pixel)."""
+    arr = np.full((4, 4, 3), 255, dtype=np.uint8)
+    arr[2, 2] = [0, 0, 0]
+    out = _adaptive_pool(arr, 4)
+    assert out.shape == (1, 1, 3)
+    # Mean ≈ 239 (>210, near-white), Min = 0 (<120, dark) → rescue
+    assert out[0, 0].tolist() == [0, 0, 0]
+
+
+def test_adaptive_pool_no_rescue_when_mean_is_dark():
+    """If the mean-pool result is already dark (a thick stroke), no rescue
+    is needed and the output is the mean-pool value, preserving any
+    midtone gradient at the edges."""
+    arr = np.array(
+        [[[ 50,  50,  50], [ 60,  60,  60]],
+         [[ 70,  70,  70], [ 80,  80,  80]]],
+        dtype=np.uint8,
+    )
+    out = _adaptive_pool(arr, 2)
+    # Mean = 65 (NOT > 210), so no rescue
+    assert out.shape == (1, 1, 3)
+    assert out[0, 0].tolist() == [65, 65, 65]
+
+
+def test_adaptive_pool_no_rescue_when_min_is_not_dark():
+    """If the min-pool result is just a slightly grayer pixel (e.g. 150),
+    that's antialiasing, not a vanishing thin feature — no rescue."""
+    arr = np.full((4, 4, 3), 250, dtype=np.uint8)
+    arr[2, 2] = [150, 150, 150]
+    out = _adaptive_pool(arr, 4)
+    # Mean ≈ 244 (>210), Min = 150 (NOT < 120) → no rescue
+    assert out.shape == (1, 1, 3)
+    assert out[0, 0, 0] >= 240  # close to mean, not the 150
+
+
+def test_adaptive_pool_block_one_is_identity():
+    arr = np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8)
+    out = _adaptive_pool(arr, 1)
+    assert np.array_equal(out, arr)
+
+
 # -- _compute_render_params unit tests --
 
 
 def test_compute_params_zoom_one():
-    """At zoom=1, output_dpi=BASE_DPI=144 and we want 2x supersample → render
-    at 288 with block_size=2."""
+    """At zoom=1 with SUPERSAMPLE=1, output_dpi=BASE_DPI=144 and the render
+    DPI matches exactly — no supersample, no downsample, no adaptive pool.
+    Behavior identical to v0.2.0 to keep text crisp at the common viewing
+    zoom."""
     renderer = PdfRenderer()
     render_dpi, output_dpi, block = renderer._compute_render_params(1.0)
     assert output_dpi == 144.0
-    assert render_dpi == 288.0
-    assert block == 2
+    assert render_dpi == 144.0
+    assert block == 1
 
 
 def test_compute_params_extreme_zoom_out():
@@ -79,13 +173,14 @@ def test_compute_params_moderate_zoom_out():
 
 
 def test_compute_params_zoom_in():
-    """At zoom=2, output_dpi=288, supersample wants 576 → render at 576 with
-    block_size=2."""
+    """At zoom=2 with SUPERSAMPLE=1, output_dpi=288 already exceeds the
+    BASE_DPI floor so render_dpi matches it exactly — no downsample needed.
+    Thin features are intrinsically visible at high zoom anyway."""
     renderer = PdfRenderer()
     render_dpi, output_dpi, block = renderer._compute_render_params(2.0)
     assert output_dpi == 288.0
-    assert render_dpi == 576.0
-    assert block == 2
+    assert render_dpi == 288.0
+    assert block == 1
 
 
 def test_compute_params_extreme_zoom_in():

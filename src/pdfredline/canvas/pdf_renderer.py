@@ -7,15 +7,9 @@ from qtpy.QtGui import QImage, QPixmap
 
 
 def _min_pool(arr: np.ndarray, block: int) -> np.ndarray:
-    """Min-pool ("darkest of block") downsample an RGB(A) bitmap by an integer
-    factor. Each output pixel takes the minimum (darkest) value of the
-    corresponding ``block × block`` source region per channel.
-
-    This is the technique used by Adobe Acrobat's "Enhance Thin Lines" feature
-    and the standard fix for the problem that bilinear or mean downsampling
-    averages thin dark features into the surrounding background and makes them
-    disappear at low zoom levels. Min-pool guarantees that any dark pixel
-    touching a block survives into the output.
+    """Min-pool downsample: each output pixel is the minimum (darkest) value
+    of its ``block × block`` source region per channel. Used internally by
+    :func:`_adaptive_pool` to compute the rescue values for thin features.
 
     Trims the bottom/right edge of the input if its dimensions are not exact
     multiples of ``block`` (at most ``block - 1`` rows/cols dropped).
@@ -32,6 +26,87 @@ def _min_pool(arr: np.ndarray, block: int) -> np.ndarray:
         c = arr.shape[2]
         return arr.reshape(new_h, block, new_w, block, c).min(axis=(1, 3))
     return arr.reshape(new_h, block, new_w, block).min(axis=(1, 3))
+
+
+def _mean_pool(arr: np.ndarray, block: int) -> np.ndarray:
+    """Mean-pool downsample: each output pixel is the per-channel arithmetic
+    mean of its ``block × block`` source region. This is the standard
+    antialiased downsample — preserves text edges and gradients smoothly,
+    but averages thin dark features into the background until they vanish.
+
+    Used internally by :func:`_adaptive_pool` as the baseline that thin
+    features are rescued *against*.
+    """
+    if block <= 1:
+        return arr
+    h, w = arr.shape[:2]
+    new_h = h // block
+    new_w = w // block
+    if new_h == 0 or new_w == 0:
+        return arr
+    arr = arr[: new_h * block, : new_w * block]
+    if arr.ndim == 3:
+        c = arr.shape[2]
+        return (
+            arr.astype(np.float32)
+            .reshape(new_h, block, new_w, block, c)
+            .mean(axis=(1, 3))
+            .astype(np.uint8)
+        )
+    return (
+        arr.astype(np.float32)
+        .reshape(new_h, block, new_w, block)
+        .mean(axis=(1, 3))
+        .astype(np.uint8)
+    )
+
+
+def _adaptive_pool(
+    arr: np.ndarray,
+    block: int,
+    near_white_thresh: int = 210,
+    dark_thresh: int = 120,
+) -> np.ndarray:
+    """Detail-preserving downsample. Mean-pool everywhere; rescue thin dark
+    features that mean-pool would have erased.
+
+    For each output block compute both downsamples:
+
+    - **mean** — standard antialiased downsample (smooth, preserves text
+      edges and gradients)
+    - **min**  — darkest pixel of the block (preserves any dark feature)
+
+    Where mean-pool produced a near-white pixel BUT min-pool found a dark
+    pixel in the same block, substitute the min-pool value to rescue thin
+    lines that mean-pool averaged into the background. Everywhere else use
+    mean-pool, which keeps text and other antialiased content smooth.
+
+    This is the technique behind Adobe Acrobat's "Enhance Thin Lines": apply
+    the aggressive operator only where the smooth operator failed. Pure
+    min-pool over-darkens text strokes by destroying their anti-aliased
+    edges; pure mean-pool loses thin features. Adaptive rescue gives both.
+
+    Empirical thresholds (validated on engineering documents): a pixel is
+    rescued when mean-pool > 210 AND min-pool < 120.
+    """
+    if block <= 1:
+        return arr
+    me = _mean_pool(arr, block)
+    mp = _min_pool(arr, block)
+    if me.shape != mp.shape:
+        return me
+
+    # Build the rescue mask in grayscale, then broadcast back to channels.
+    if me.ndim == 3:
+        me_gray = me.mean(axis=2)
+        mp_gray = mp.mean(axis=2)
+    else:
+        me_gray = me
+        mp_gray = mp
+    rescue = (me_gray > near_white_thresh) & (mp_gray < dark_thresh)
+    if me.ndim == 3:
+        rescue = rescue[..., None]
+    return np.where(rescue, mp, me)
 
 
 class RenderResult:
@@ -120,7 +195,7 @@ class _RenderWorker(QRunnable):
             arr = arr.copy()
 
             if self.block_size > 1:
-                arr = _min_pool(arr, self.block_size)
+                arr = _adaptive_pool(arr, self.block_size)
             arr = np.ascontiguousarray(arr)
 
             h, w = arr.shape[:2]
@@ -141,19 +216,23 @@ class _RenderWorker(QRunnable):
 class PdfRenderer(QObject):
     """Manages PDF document loading and adaptive page rendering.
 
-    Rendering pipeline (the "Acrobat Enhance Thin Lines" approach):
+    Rendering pipeline:
 
     1. Compute the OUTPUT DPI that matches the display at the current zoom
        (``BASE_DPI * zoom_level``).
-    2. Compute a RENDER DPI that is at least ``SUPERSAMPLE``× the output DPI
-       AND at least ``BASE_DPI`` (so PDFium itself has enough resolution to
-       draw thin features without anti-aliasing them away).
+    2. Compute a RENDER DPI that is at least ``BASE_DPI`` (so PDFium itself
+       has enough resolution to draw thin features without anti-aliasing
+       them away) and an integer multiple of the output DPI.
     3. Rasterize at the render DPI via pypdfium2.
-    4. Min-pool downsample to the output DPI. Min-pool ("darkest pixel of
-       block") preserves thin dark features that mean downsampling would erase.
+    4. If render_dpi > output_dpi, **adaptive-pool** down to output_dpi:
+       mean-pool everywhere (preserves text antialiasing); min-pool only in
+       blocks where mean-pool produced a near-white pixel but the source
+       had a dark pixel (rescues thin features). This is the same trade-off
+       Adobe Acrobat's "Enhance Thin Lines" makes.
 
-    The result is a bitmap whose native pixel resolution matches the screen
-    at the current zoom, with thin features intact.
+    At zoom ≥ 1.0 the render DPI equals the output DPI and no downsampling
+    happens at all — the bitmap goes straight from PDFium to QPixmap, which
+    matches the v0.2.0 behavior the user was satisfied with for text.
     """
 
     render_ready = Signal(object)  # RenderResult
@@ -162,8 +241,11 @@ class PdfRenderer(QObject):
     BASE_DPI = 144.0          # Floor on the render DPI; PDFium needs this much
                               # resolution to draw thin features cleanly.
     MAX_DPI = 600.0           # Hard cap on render DPI to keep memory bounded.
-    SUPERSAMPLE = 2           # Minimum oversample factor over the screen DPI.
-    MAX_BLOCK_SIZE = 32       # Cap the min-pool block size at extreme zoom-out.
+    SUPERSAMPLE = 1           # Minimum oversample factor over the screen DPI.
+                              # 1 means: at zoom >= 1, render at exact screen
+                              # DPI (no supersample, no min-pool, no
+                              # downsampling — matches v0.2.0).
+    MAX_BLOCK_SIZE = 32       # Cap the adaptive-pool block size at extreme zoom-out.
     RERENDER_THRESHOLD = 1.5  # Re-render when output DPI moves by more than this.
     DEBOUNCE_MS = 200
 
