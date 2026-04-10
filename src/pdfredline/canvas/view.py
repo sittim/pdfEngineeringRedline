@@ -24,9 +24,14 @@ class RedlineView(QGraphicsView):
         self._panning = False
         self._tool_manager: ToolManager | None = None
 
+        # SmoothPixmapTransform is intentionally OFF: bilinear filtering of the
+        # PDF background pixmap averages thin features (rules, hairlines) into
+        # the surrounding white at low zoom levels and makes them disappear.
+        # The PdfRenderer re-rasterizes on both zoom-in and zoom-out so the
+        # pixmap is always close to screen resolution; nearest-neighbor sampling
+        # at that point preserves thin lines without visible aliasing.
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing
-            | QPainter.RenderHint.SmoothPixmapTransform
             | QPainter.RenderHint.TextAntialiasing
         )
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)

@@ -48,3 +48,10 @@ def test_angular_dimension_compute(qapp):
     dim.target_pt = QPointF(0, 100)  # 90 degrees
     angle = dim._compute()
     assert abs(angle - 90) < 0.1
+
+
+def test_dimension_pen_is_cosmetic(qapp):
+    """Dimension pens must be cosmetic so dimension lines stay visible when the
+    user zooms out. Same reason as shape annotations."""
+    pen = LinearDimension()._pen()
+    assert pen.isCosmetic()

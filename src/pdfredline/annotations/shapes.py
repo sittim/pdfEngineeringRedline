@@ -24,7 +24,7 @@ class ShapeStyle:
             pen.setStyle(Qt.PenStyle.DotLine)
         else:
             pen.setStyle(Qt.PenStyle.SolidLine)
-        pen.setCosmetic(False)
+        pen.setCosmetic(True)
         return pen
 
     def brush(self) -> QBrush:

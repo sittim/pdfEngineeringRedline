@@ -47,7 +47,9 @@ class DimensionBase(AnnotationItem):
         self.target_pt: QPointF = QPointF(100, 0)
 
     def _pen(self) -> QPen:
-        return QPen(QColor(*self.dim_color), DIM_LINE_WIDTH)
+        pen = QPen(QColor(*self.dim_color), DIM_LINE_WIDTH)
+        pen.setCosmetic(True)
+        return pen
 
     def _pts_to_inches(self, pts: float) -> float:
         return pts / 72.0

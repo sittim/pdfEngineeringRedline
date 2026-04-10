@@ -5,8 +5,17 @@ from pdfredline.annotations.shapes import (
     LineAnnotation,
     OvalAnnotation,
     RectAnnotation,
+    ShapeStyle,
     TriangleAnnotation,
 )
+
+
+def test_shape_pen_is_cosmetic(qapp):
+    """Annotation pens must be cosmetic so stroke width is in device pixels and
+    lines remain visible at every zoom level. Without this, a 2 pt stroke at
+    5% zoom becomes 0.1 device pixels and disappears."""
+    pen = ShapeStyle().pen()
+    assert pen.isCosmetic()
 
 
 def test_line_serialize_roundtrip(qapp):

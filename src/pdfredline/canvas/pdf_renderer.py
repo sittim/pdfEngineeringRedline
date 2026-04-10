@@ -42,7 +42,7 @@ class _RenderWorker(QRunnable):
             height_pts = page.get_height()
 
             scale = self.dpi / 72.0
-            bitmap = page.render(scale=scale)
+            bitmap = page.render(scale=scale, optimize_mode="lcd")
             arr = bitmap.to_numpy()
             bitmap.close()
             page.close()
@@ -68,6 +68,7 @@ class PdfRenderer(QObject):
     render_error = Signal(str)
 
     BASE_DPI = 144.0
+    MIN_DPI = 72.0
     MAX_DPI = 600.0
     RERENDER_THRESHOLD = 1.5
     DEBOUNCE_MS = 200
@@ -118,14 +119,20 @@ class PdfRenderer(QObject):
         self._submit_render(page_index, target_dpi)
 
     def request_rerender(self, zoom_level: float):
-        """Called when zoom changes. Debounces and re-renders at higher DPI if needed."""
+        """Called when zoom changes. Debounces and re-renders whenever the
+        rendered DPI is no longer a good match for the visible zoom — in either
+        direction. Without re-rendering on zoom-out, thin features in the
+        rasterized page get bilinear-averaged into the background and disappear.
+        """
         if self._pdf_path is None:
             return
         effective_dpi = self.BASE_DPI * zoom_level
-        if effective_dpi > self.MAX_DPI:
-            effective_dpi = self.MAX_DPI
+        effective_dpi = max(self.MIN_DPI, min(effective_dpi, self.MAX_DPI))
 
-        if self._rendered_dpi > 0 and effective_dpi > self._rendered_dpi * self.RERENDER_THRESHOLD:
+        if self._rendered_dpi <= 0:
+            return
+        ratio = effective_dpi / self._rendered_dpi
+        if ratio > self.RERENDER_THRESHOLD or ratio < (1.0 / self.RERENDER_THRESHOLD):
             self._pending_dpi = effective_dpi
             self._debounce_timer.start(self.DEBOUNCE_MS)
 

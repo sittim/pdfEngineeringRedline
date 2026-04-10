@@ -109,8 +109,12 @@ jobs:
           done
           ls -la
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*.zip
-          generate_release_notes: true
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            artifacts/*.zip
