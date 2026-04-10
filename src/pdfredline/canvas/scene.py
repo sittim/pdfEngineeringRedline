@@ -53,6 +53,11 @@ class RedlineScene(QGraphicsScene):
             self._pdf_background.setFlag(selectable, False)
             self._pdf_background.setFlag(QGraphicsPixmapItem.GraphicsItemFlag.ItemIsMovable, False)
             self._pdf_background.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            # Bilinear sampling for the background pixmap. Belt-and-braces
+            # with the view's SmoothPixmapTransform render hint — some Qt
+            # platform plugins respect one but not the other, so set both.
+            # See view.py for the rationale.
+            self._pdf_background.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
             self.addItem(self._pdf_background)
 
         self._pdf_background.setPixmap(result.pixmap)

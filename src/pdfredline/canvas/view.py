@@ -24,14 +24,22 @@ class RedlineView(QGraphicsView):
         self._panning = False
         self._tool_manager: ToolManager | None = None
 
-        # SmoothPixmapTransform is intentionally OFF: bilinear filtering of the
-        # PDF background pixmap averages thin features (rules, hairlines) into
-        # the surrounding white at low zoom levels and makes them disappear.
-        # The PdfRenderer re-rasterizes on both zoom-in and zoom-out so the
-        # pixmap is always close to screen resolution; nearest-neighbor sampling
-        # at that point preserves thin lines without visible aliasing.
+        # SmoothPixmapTransform is ON: the PdfRenderer always produces a
+        # bitmap at BASE_DPI=144, which is 2× the natural scene unit (72 pt
+        # per inch), so Qt always has to downsample 2:1 to display the
+        # background at any view zoom. Bilinear (smooth) sampling preserves
+        # text antialiasing and line edges; nearest-neighbor sampling
+        # discards every other source pixel and makes strokes look chunky
+        # and broken — the symptom users see at the common viewing zoom.
+        #
+        # The original concern that bilinear would erase thin features at
+        # low zoom is now handled inside the renderer: PdfRenderer's
+        # adaptive_pool pre-darkens thin features into the bitmap before
+        # Qt sees them, so a rescued black pixel + white neighbor averages
+        # to ~50% gray (visible) rather than vanishing.
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing
+            | QPainter.RenderHint.SmoothPixmapTransform
             | QPainter.RenderHint.TextAntialiasing
         )
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
